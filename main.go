@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/hale-pretty/chirpy/database"
@@ -18,13 +19,12 @@ type ChirpRequest struct {
 	Body string `json:"body"`
 }
 
-type ErrorResponse struct {
-	Error string `json:"error"`
+type UserRequest struct {
+	Email string `json:"email"`
 }
 
-type SuccessResponse struct {
-	Id          string `json: "id"`
-	CleanedBody string `json:"cleaned_body"`
+type ErrorResponse struct {
+	Error string `json:"error"`
 }
 
 var db *database.DB
@@ -119,13 +119,47 @@ func createChirpHandler(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, 201, chirp)
 }
 
-func getChirpHandler(w http.ResponseWriter, r *http.Request) {
+func getFullChirpsHandler(w http.ResponseWriter, r *http.Request) {
 	chirpsMap := db.Data.Chirps
 	resp := make([]database.Chirp, 0, len(chirpsMap))
 	for _, chirp := range chirpsMap {
 		resp = append(resp, chirp)
 	}
 	respondWithJSON(w, 200, resp)
+}
+
+func getChirpHandler(w http.ResponseWriter, r *http.Request) {
+	chirpIdStr := r.PathValue("id")
+	chirpIdInt, err := strconv.Atoi(chirpIdStr)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid path")
+	}
+	chirpsMap := db.Data.Chirps
+	respChirp, existedId := chirpsMap[chirpIdInt]
+	if !existedId {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+	}
+	respondWithJSON(w, 200, respChirp)
+}
+
+func createUsersHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.Body)
+	decoder := json.NewDecoder(r.Body)
+	userRequest := UserRequest{}
+	err := decoder.Decode(&userRequest)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+	log.Println(userRequest)
+	// userRequest is a struct with data populated successfully
+	log.Println(userRequest)
+	user, err := db.CreateUser(userRequest.Email)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+	}
+	respondWithJSON(w, 201, user)
 }
 
 func main() {
@@ -142,7 +176,9 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthzHandler)
 	mux.HandleFunc("/api/reset", apiCfg.resetHandler)
 	mux.HandleFunc("POST /api/chirps", createChirpHandler)
-	mux.HandleFunc("GET /api/chirps", getChirpHandler)
+	mux.HandleFunc("GET /api/chirps", getFullChirpsHandler)
+	mux.HandleFunc("GET /api/chirps/{id}", getChirpHandler)
+	mux.HandleFunc("POST /api/users", createUsersHandler)
 	server := &http.Server{
 		Addr:    "localhost:8080",
 		Handler: mux,

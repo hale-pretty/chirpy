@@ -12,6 +12,11 @@ type Chirp struct {
 	Body string `json:"body"`
 }
 
+type User struct {
+	ID    int    `json:"id"`
+	Email string `json:"email"`
+}
+
 type DB struct {
 	path string
 	mux  *sync.RWMutex
@@ -20,17 +25,20 @@ type DB struct {
 
 type DbData struct {
 	Chirps map[int]Chirp `json:"chirps"`
+	Users  map[int]User  `json:"users"`
 }
 
 // NewDB creates a new database connection
 // and creates the database file if it doesn't exist
 func NewDB(path string) (*DB, error) {
 	chirpsMap := make(map[int]Chirp)
+	usersMap := make(map[int]User)
 	db := &DB{
 		path: path,
 		mux:  &sync.RWMutex{},
 		Data: &DbData{
 			Chirps: chirpsMap,
+			Users:  usersMap,
 		},
 	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -86,4 +94,20 @@ func (db *DB) CreateChirp(msg string) (Chirp, error) {
 		return Chirp{}, err
 	}
 	return newChirp, nil
+}
+
+// create new User and write new DB.data to disk
+func (db *DB) CreateUser(msg string) (User, error) {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	newUser := User{
+		ID:    len(db.Data.Users) + 1,
+		Email: msg,
+	}
+	db.Data.Users[newUser.ID] = newUser
+	err := db.writeDBtoDisk()
+	if err != nil {
+		return User{}, err
+	}
+	return newUser, nil
 }
