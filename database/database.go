@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Chirp struct {
@@ -13,6 +15,13 @@ type Chirp struct {
 }
 
 type User struct {
+	ID           int    `json:"id"`
+	Email        string `json:"email"`
+	Password     []byte `json:"password"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type UserWithoutPW struct {
 	ID    int    `json:"id"`
 	Email string `json:"email"`
 }
@@ -97,17 +106,112 @@ func (db *DB) CreateChirp(msg string) (Chirp, error) {
 }
 
 // create new User and write new DB.data to disk
-func (db *DB) CreateUser(msg string) (User, error) {
+func (db *DB) CreateUser(email string, password string) (UserWithoutPW, error) {
 	db.mux.Lock()
 	defer db.mux.Unlock()
+	hashedPassword, err1 := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err1 != nil {
+		return UserWithoutPW{}, err1
+	}
 	newUser := User{
-		ID:    len(db.Data.Users) + 1,
-		Email: msg,
+		ID:       len(db.Data.Users) + 1,
+		Password: hashedPassword,
+		Email:    email,
 	}
 	db.Data.Users[newUser.ID] = newUser
-	err := db.writeDBtoDisk()
-	if err != nil {
-		return User{}, err
+	err2 := db.writeDBtoDisk()
+	if err2 != nil {
+		return UserWithoutPW{}, err2
 	}
-	return newUser, nil
+	newUserWoPW := UserWithoutPW{
+		ID:    newUser.ID,
+		Email: newUser.Email,
+	}
+	return newUserWoPW, nil
+}
+
+func (db *DB) IdentifyUser(password string) (UserWithoutPW, bool) {
+	usersMap := db.Data.Users
+	for _, user := range usersMap {
+		err := bcrypt.CompareHashAndPassword(user.Password, []byte(password))
+		if err == nil {
+			return UserWithoutPW{
+				ID:    user.ID,
+				Email: user.Email,
+			}, true
+		}
+	}
+	return UserWithoutPW{}, false
+}
+
+func (db *DB) UpdateUser(userID int, email, password string) (UserWithoutPW, bool) {
+	for id, user := range db.Data.Users {
+		if id == userID {
+			hashedPassword, err1 := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err1 != nil {
+				return UserWithoutPW{}, false
+			}
+			db.Data.Users[id] = User{
+				ID:           user.ID,
+				Email:        email,
+				Password:     hashedPassword,
+				RefreshToken: user.RefreshToken,
+			}
+
+			err := db.writeDBtoDisk()
+			if err != nil {
+				panic(err)
+			}
+			return UserWithoutPW{
+				ID:    userID,
+				Email: email,
+			}, true
+		}
+	}
+	return UserWithoutPW{}, false
+}
+
+func (db *DB) LoginUser(userID int, refreshToken string) {
+	for id, user := range db.Data.Users {
+		if id == userID {
+			db.Data.Users[id] = User{
+				ID:           user.ID,
+				Email:        user.Email,
+				Password:     user.Password,
+				RefreshToken: refreshToken,
+			}
+			err := db.writeDBtoDisk()
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+}
+
+func (db *DB) RefreshNewAccessToken(refreshToken string) (int, bool) {
+	for _, user := range db.Data.Users {
+		if user.RefreshToken == refreshToken {
+			return user.ID, true
+		}
+	}
+	return 0, false
+}
+
+func (db *DB) RevokeRefreshToken(refreshToken string) bool {
+	for id, user := range db.Data.Users {
+		if user.RefreshToken == refreshToken {
+			db.Data.Users[id] = User{
+				ID:           user.ID,
+				Email:        user.Email,
+				Password:     user.Password,
+				RefreshToken: "",
+			}
+			err := db.writeDBtoDisk()
+			if err != nil {
+				panic(err)
+			}
+			return true
+		}
+	}
+	return false
 }
