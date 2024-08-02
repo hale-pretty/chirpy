@@ -10,8 +10,9 @@ import (
 )
 
 type Chirp struct {
-	ID   int    `json:"id"`
-	Body string `json:"body"`
+	ID       int    `json:"id"`
+	Body     string `json:"body"`
+	AuthorID int    `json:"author_id"`
 }
 
 type User struct {
@@ -90,12 +91,13 @@ func (db *DB) loadDB() error {
 }
 
 // create new Chirp and write new DB.data to disk
-func (db *DB) CreateChirp(msg string) (Chirp, error) {
+func (db *DB) CreateChirp(msg string, authorID int) (Chirp, error) {
 	db.mux.Lock()
 	defer db.mux.Unlock()
 	newChirp := Chirp{
-		ID:   len(db.Data.Chirps) + 1,
-		Body: msg,
+		ID:       len(db.Data.Chirps) + 1,
+		Body:     msg,
+		AuthorID: authorID,
 	}
 	db.Data.Chirps[newChirp.ID] = newChirp
 	err := db.writeDBtoDisk()
@@ -103,6 +105,17 @@ func (db *DB) CreateChirp(msg string) (Chirp, error) {
 		return Chirp{}, err
 	}
 	return newChirp, nil
+}
+
+// Return slice of chirps body with the same author
+func (db *DB) GetChirp(authorID int) []string {
+	res := make([]string, 0, len(db.Data.Chirps))
+	for _, chirp := range db.Data.Chirps {
+		if chirp.AuthorID == authorID {
+			res = append(res, chirp.Body)
+		}
+	}
+	return res
 }
 
 // create new User and write new DB.data to disk
@@ -130,6 +143,7 @@ func (db *DB) CreateUser(email string, password string) (UserWithoutPW, error) {
 	return newUserWoPW, nil
 }
 
+// Login user
 func (db *DB) IdentifyUser(password string) (UserWithoutPW, bool) {
 	usersMap := db.Data.Users
 	for _, user := range usersMap {
@@ -144,6 +158,7 @@ func (db *DB) IdentifyUser(password string) (UserWithoutPW, bool) {
 	return UserWithoutPW{}, false
 }
 
+// Update user info
 func (db *DB) UpdateUser(userID int, email, password string) (UserWithoutPW, bool) {
 	for id, user := range db.Data.Users {
 		if id == userID {
@@ -171,6 +186,7 @@ func (db *DB) UpdateUser(userID int, email, password string) (UserWithoutPW, boo
 	return UserWithoutPW{}, false
 }
 
+// Login user and save refresh token to database
 func (db *DB) LoginUser(userID int, refreshToken string) {
 	for id, user := range db.Data.Users {
 		if id == userID {

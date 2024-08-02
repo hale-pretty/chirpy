@@ -118,6 +118,34 @@ func cleanProfanity(msg string) string {
 }
 
 func createChirpHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Get the Author ID
+	tokenString, err1 := getTokenString(r.Header)
+	if err1 != nil {
+		http.Error(w, err1.Error(), http.StatusUnauthorized)
+		return
+	}
+	// Parse and validate the JWT
+	token, err2 := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
+		// Validate the alg is what you expect
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(jwtSecret), nil
+	})
+	if err2 != nil || !token.Valid {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	// Extract claims and userID
+	claims, ok := token.Claims.(*jwt.RegisteredClaims)
+	if !ok {
+		http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+	}
+	userIDStr := claims.Subject
+	userID, _ := strconv.Atoi(userIDStr)
+
+	// 2. Decode Request Body
 	decoder := json.NewDecoder(r.Body)
 	chirpRequest := ChirpRequest{}
 	err := decoder.Decode(&chirpRequest)
@@ -128,8 +156,7 @@ func createChirpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// chirpRequest is a struct with data populated successfully
 
-	// code a part to extract userID from token
-
+	// 3. Validate chirp body
 	if len(chirpRequest.Body) > 140 {
 		w.WriteHeader(http.StatusBadRequest)
 		respondWithError(w, http.StatusBadRequest, "Something went wrong")
@@ -137,7 +164,9 @@ func createChirpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cleanedBody := cleanProfanity(chirpRequest.Body)
-	chirp, err := db.CreateChirp(cleanedBody)
+
+	// 4. Create Chirp
+	chirp, err := db.CreateChirp(cleanedBody, userID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 	}
@@ -154,17 +183,17 @@ func getFullChirpsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getChirpHandler(w http.ResponseWriter, r *http.Request) {
-	chirpIdStr := r.PathValue("id")
-	chirpIdInt, err := strconv.Atoi(chirpIdStr)
+	authorIdStr := r.PathValue("author_id")
+	authorIdInt, err := strconv.Atoi(authorIdStr)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid path")
 	}
-	chirpsMap := db.Data.Chirps
-	respChirp, existedId := chirpsMap[chirpIdInt]
-	if !existedId {
-		http.Error(w, "404 page not found", http.StatusNotFound)
+	postedChirp := db.GetChirp(authorIdInt)
+	if len(postedChirp) == 0 {
+		http.Error(w, "Chirps not found", http.StatusNotFound)
+		return
 	}
-	respondWithJSON(w, 200, respChirp)
+	respondWithJSON(w, 200, postedChirp)
 }
 
 func createUsersHandler(w http.ResponseWriter, r *http.Request) {
@@ -268,8 +297,8 @@ func updateUsersHandler(w http.ResponseWriter, r *http.Request) {
 	tokenString, err1 := getTokenString(r.Header)
 	if err1 != nil {
 		http.Error(w, err1.Error(), http.StatusUnauthorized)
+		return
 	}
-	log.Println(tokenString)
 	// Parse and validate the JWT
 	token, err2 := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// Validate the alg is what you expect
@@ -346,6 +375,10 @@ func revokeHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+// func deleteChirpHandler(w http.ResponseWriter, r *http.Request) {
+
+// }
+
 func main() {
 	// create database
 	var err1 error
@@ -378,12 +411,13 @@ func main() {
 	mux.HandleFunc("/api/reset", apiCfg.resetHandler)
 	mux.HandleFunc("POST /api/chirps", createChirpHandler)
 	mux.HandleFunc("GET /api/chirps", getFullChirpsHandler)
-	mux.HandleFunc("GET /api/chirps/{id}", getChirpHandler)
+	mux.HandleFunc("GET /api/chirps/{author_id}", getChirpHandler)
 	mux.HandleFunc("POST /api/users", createUsersHandler)
 	mux.HandleFunc("POST /api/login", loginUsersHandler)
 	mux.HandleFunc("PUT /api/users", updateUsersHandler)
 	mux.HandleFunc("POST /api/refresh", refreshHandler)
 	mux.HandleFunc("POST /api/revoke", revokeHandler)
+	// mux.HandleFunc("DELETE /api/chirps/{chirpID}", deleteChirpHandler)
 	server := &http.Server{
 		Addr:    "localhost:8080",
 		Handler: mux,
