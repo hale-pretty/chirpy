@@ -183,7 +183,7 @@ func getFullChirpsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getChirpHandler(w http.ResponseWriter, r *http.Request) {
-	authorIdStr := r.PathValue("author_id")
+	authorIdStr := r.PathValue("authorID")
 	authorIdInt, err := strconv.Atoi(authorIdStr)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid path")
@@ -294,6 +294,7 @@ func getTokenString(h http.Header) (string, error) {
 }
 
 func updateUsersHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Check authorization
 	tokenString, err1 := getTokenString(r.Header)
 	if err1 != nil {
 		http.Error(w, err1.Error(), http.StatusUnauthorized)
@@ -320,7 +321,7 @@ func updateUsersHandler(w http.ResponseWriter, r *http.Request) {
 	userIDStr := claims.Subject
 	userID, _ := strconv.Atoi(userIDStr)
 
-	// Get the body to update
+	// 2. Get the body to update
 	decoder := json.NewDecoder(r.Body)
 	userRequest := UserRequest{}
 	err3 := decoder.Decode(&userRequest)
@@ -329,7 +330,7 @@ func updateUsersHandler(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Something went wrong")
 		return
 	}
-
+	// 3. Update info to database
 	resp, ok := db.UpdateUser(userID, userRequest.Email, userRequest.Password)
 	if !ok {
 		http.Error(w, "User is not found", http.StatusUnauthorized)
@@ -372,12 +373,54 @@ func revokeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(204)
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// func deleteChirpHandler(w http.ResponseWriter, r *http.Request) {
+func deleteChirpHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Check authorization
+	tokenString, err1 := getTokenString(r.Header)
+	if err1 != nil {
+		http.Error(w, err1.Error(), http.StatusUnauthorized)
+		return
+	}
+	// Parse and validate the JWT
+	token, err2 := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
+		// Validate the alg is what you expect
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(jwtSecret), nil
+	})
+	if err2 != nil || !token.Valid {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+	// Extract claims and userID
+	claims, ok := token.Claims.(*jwt.RegisteredClaims)
+	if !ok {
+		http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+	}
+	userIDStr := claims.Subject
+	userID, _ := strconv.Atoi(userIDStr)
 
-// }
+	// 2. Get chirp id
+	chirpIdStr := r.PathValue("chirpID")
+	chirpIdInt, err3 := strconv.Atoi(chirpIdStr)
+	if err3 != nil {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Delete chirp in the database
+	err4 := db.DeleteChirp(userID, chirpIdInt)
+	if err4 != nil {
+		http.Error(w, err4.Error(), http.StatusForbidden)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func main() {
 	// create database
@@ -411,13 +454,13 @@ func main() {
 	mux.HandleFunc("/api/reset", apiCfg.resetHandler)
 	mux.HandleFunc("POST /api/chirps", createChirpHandler)
 	mux.HandleFunc("GET /api/chirps", getFullChirpsHandler)
-	mux.HandleFunc("GET /api/chirps/{author_id}", getChirpHandler)
+	mux.HandleFunc("GET /api/chirps/{authorID}", getChirpHandler)
 	mux.HandleFunc("POST /api/users", createUsersHandler)
 	mux.HandleFunc("POST /api/login", loginUsersHandler)
 	mux.HandleFunc("PUT /api/users", updateUsersHandler)
 	mux.HandleFunc("POST /api/refresh", refreshHandler)
 	mux.HandleFunc("POST /api/revoke", revokeHandler)
-	// mux.HandleFunc("DELETE /api/chirps/{chirpID}", deleteChirpHandler)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", deleteChirpHandler)
 	server := &http.Server{
 		Addr:    "localhost:8080",
 		Handler: mux,

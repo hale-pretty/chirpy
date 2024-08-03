@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -230,4 +231,17 @@ func (db *DB) RevokeRefreshToken(refreshToken string) bool {
 		}
 	}
 	return false
+}
+
+func (db *DB) DeleteChirp(authorID, chirpID int) error {
+	for id, chirp := range db.Data.Chirps {
+		if chirp.AuthorID != authorID {
+			return errors.New("cannot delete chirps of others")
+		}
+		if id == chirpID {
+			db.Data.Chirps[id] = Chirp{}
+			return nil
+		}
+	}
+	return errors.New("chirp not found")
 }
