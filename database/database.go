@@ -2,12 +2,9 @@ package database
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"sync"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 type Chirp struct {
@@ -21,11 +18,13 @@ type User struct {
 	Email        string `json:"email"`
 	Password     []byte `json:"password"`
 	RefreshToken string `json:"refresh_token"`
+	IsChirpyRed  bool   `json:"is_chirpy_red"`
 }
 
 type UserWithoutPW struct {
-	ID    int    `json:"id"`
-	Email string `json:"email"`
+	ID          int    `json:"id"`
+	Email       string `json:"email"`
+	IsChirpyRed bool   `json:"is_chirpy_red"`
 }
 
 type DB struct {
@@ -89,159 +88,4 @@ func (db *DB) loadDB() error {
 		return err2
 	}
 	return nil
-}
-
-// create new Chirp and write new DB.data to disk
-func (db *DB) CreateChirp(msg string, authorID int) (Chirp, error) {
-	db.mux.Lock()
-	defer db.mux.Unlock()
-	newChirp := Chirp{
-		ID:       len(db.Data.Chirps) + 1,
-		Body:     msg,
-		AuthorID: authorID,
-	}
-	db.Data.Chirps[newChirp.ID] = newChirp
-	err := db.writeDBtoDisk()
-	if err != nil {
-		return Chirp{}, err
-	}
-	return newChirp, nil
-}
-
-// Return slice of chirps body with the same author
-func (db *DB) GetChirp(authorID int) []string {
-	res := make([]string, 0, len(db.Data.Chirps))
-	for _, chirp := range db.Data.Chirps {
-		if chirp.AuthorID == authorID {
-			res = append(res, chirp.Body)
-		}
-	}
-	return res
-}
-
-// create new User and write new DB.data to disk
-func (db *DB) CreateUser(email string, password string) (UserWithoutPW, error) {
-	db.mux.Lock()
-	defer db.mux.Unlock()
-	hashedPassword, err1 := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err1 != nil {
-		return UserWithoutPW{}, err1
-	}
-	newUser := User{
-		ID:       len(db.Data.Users) + 1,
-		Password: hashedPassword,
-		Email:    email,
-	}
-	db.Data.Users[newUser.ID] = newUser
-	err2 := db.writeDBtoDisk()
-	if err2 != nil {
-		return UserWithoutPW{}, err2
-	}
-	newUserWoPW := UserWithoutPW{
-		ID:    newUser.ID,
-		Email: newUser.Email,
-	}
-	return newUserWoPW, nil
-}
-
-// Login user
-func (db *DB) IdentifyUser(password string) (UserWithoutPW, bool) {
-	usersMap := db.Data.Users
-	for _, user := range usersMap {
-		err := bcrypt.CompareHashAndPassword(user.Password, []byte(password))
-		if err == nil {
-			return UserWithoutPW{
-				ID:    user.ID,
-				Email: user.Email,
-			}, true
-		}
-	}
-	return UserWithoutPW{}, false
-}
-
-// Update user info
-func (db *DB) UpdateUser(userID int, email, password string) (UserWithoutPW, bool) {
-	for id, user := range db.Data.Users {
-		if id == userID {
-			hashedPassword, err1 := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-			if err1 != nil {
-				return UserWithoutPW{}, false
-			}
-			db.Data.Users[id] = User{
-				ID:           user.ID,
-				Email:        email,
-				Password:     hashedPassword,
-				RefreshToken: user.RefreshToken,
-			}
-
-			err := db.writeDBtoDisk()
-			if err != nil {
-				panic(err)
-			}
-			return UserWithoutPW{
-				ID:    userID,
-				Email: email,
-			}, true
-		}
-	}
-	return UserWithoutPW{}, false
-}
-
-// Login user and save refresh token to database
-func (db *DB) LoginUser(userID int, refreshToken string) {
-	for id, user := range db.Data.Users {
-		if id == userID {
-			db.Data.Users[id] = User{
-				ID:           user.ID,
-				Email:        user.Email,
-				Password:     user.Password,
-				RefreshToken: refreshToken,
-			}
-			err := db.writeDBtoDisk()
-			if err != nil {
-				panic(err)
-			}
-		}
-	}
-}
-
-func (db *DB) RefreshNewAccessToken(refreshToken string) (int, bool) {
-	for _, user := range db.Data.Users {
-		if user.RefreshToken == refreshToken {
-			return user.ID, true
-		}
-	}
-	return 0, false
-}
-
-func (db *DB) RevokeRefreshToken(refreshToken string) bool {
-	for id, user := range db.Data.Users {
-		if user.RefreshToken == refreshToken {
-			db.Data.Users[id] = User{
-				ID:           user.ID,
-				Email:        user.Email,
-				Password:     user.Password,
-				RefreshToken: "",
-			}
-			err := db.writeDBtoDisk()
-			if err != nil {
-				panic(err)
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func (db *DB) DeleteChirp(authorID, chirpID int) error {
-	for id, chirp := range db.Data.Chirps {
-		if chirp.AuthorID != authorID {
-			return errors.New("cannot delete chirps of others")
-		}
-		if id == chirpID {
-			db.Data.Chirps[id] = Chirp{}
-			return nil
-		}
-	}
-	return errors.New("chirp not found")
 }
